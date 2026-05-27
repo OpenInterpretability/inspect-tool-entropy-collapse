@@ -56,7 +56,7 @@ Sub-classes follow the operational definitions from the Tool-Entropy paper:
 - **LOCKED** = `finish_reason == "max_turns"` AND probe stably < 0.30 by mean fraction 0.92 of trajectory
 - **WANDERING** = `finish_reason == "max_turns"` AND probe stays > 0.70
 
-⚠️ **Hardware-determinism caveat** (see paper #2): the WANDERING category is not fully hardware-stable. Same-seed re-runs on H100 of trajectories classified as WANDERING on RTX 6000 emit `finish_tool` 35% of the time. The detector eval scores against the **original RTX 6000 classification**; restricting analysis to the cross-hardware-stable WANDERING subset is left to follow-up work.
+⚠️ **Hardware-determinism caveat** (see paper #2): the WANDERING category is not fully hardware-stable. Same-seed re-runs on H100 of trajectories classified as WANDERING on RTX 6000 Pro Blackwell emit `finish_tool` 35% of the time. The detector eval scores against the **original RTX 6000 Pro Blackwell classification**; restricting analysis to the cross-hardware-stable WANDERING subset is left to follow-up work.
 
 ## Metrics
 
