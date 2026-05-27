@@ -1,0 +1,38 @@
+title: "Tool-Entropy Collapse: WANDERING Failure-Mode Detection"
+description: |
+  Monitoring eval for the WANDERING agent failure mode. Given pre-recorded multi-turn
+  agent trajectories (Qwen3.6-27B on SWE-bench Pro, N=99) with gold WANDERING/SUCCESS/LOCKED
+  labels, applies one of four WANDERING detectors (v1 post-hoc text, v4 cross-layer probe
+  disagreement, v5 tool-entropy collapse, v1∪v5 ensemble) and scores recall, false-positive
+  rate, and lead-turns.
+
+  Trajectories are pre-recorded — no model is invoked at eval time. This is a "monitoring
+  eval" rather than a "capability eval": the subject under test is the detector function,
+  not the agent.
+
+arxiv: https://zenodo.org/records/20368601
+group: Safeguards
+contributors:
+  - "caiovicentino"
+version: "1-A"
+tasks:
+  - name: tool_entropy_collapse
+    dataset_samples: 99
+tags:
+  - Agent
+  - Monitoring
+  - Safety
+external_assets:
+  - type: huggingface
+    source: caiovicentino1/swebench-pro-qwen36-27b-phase6
+    fetch_method: hf_hub_download
+    state: pinned
+metadata:
+  requires_internet: true
+  sandbox: []
+  paper_doi: "10.5281/zenodo.20368601"
+  data_repo: "https://huggingface.co/datasets/caiovicentino1/swebench-pro-qwen36-27b-phase6"
+  hardware_caveat: |
+    WANDERING category is single-run classified on RTX 6000 Ada. Cross-GPU re-runs
+    show ~35% natural finish_tool flip rate on H100, so labels include some hardware-
+    determinism noise. See companion paper #2 for discussion.
