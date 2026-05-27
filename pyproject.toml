@@ -26,11 +26,7 @@ keywords = ["mechanistic-interpretability", "agent-safety", "swe-bench", "failur
 dependencies = [
     "inspect_ai>=0.3.158",
     "huggingface_hub>=0.24",
-    "safetensors>=0.4",
-    "torch>=2.1",
     "numpy>=1.24",
-    "scipy>=1.10",
-    "scikit-learn>=1.3",
 ]
 
 [project.urls]
@@ -42,6 +38,9 @@ Paper = "https://zenodo.org/records/20368601"
 tool_entropy_collapse = "tool_entropy_collapse"
 
 [project.optional-dependencies]
+# Online v4 cross-layer detector (computes from probe weights + residuals)
+# Default: v4 uses cached precomputed outputs (no torch needed)
+online_v4 = ["safetensors>=0.4", "torch>=2.1", "scikit-learn>=1.3", "joblib>=1.3"]
 dev = ["pytest>=7.4", "pytest-asyncio>=0.23", "ruff>=0.4", "mypy>=1.7"]
 
 [tool.ruff]

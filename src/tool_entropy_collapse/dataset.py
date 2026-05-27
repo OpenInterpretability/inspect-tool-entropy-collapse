@@ -94,8 +94,32 @@ def load_trace(iid: str, repo_id: str = REPO_ID, revision: str = REVISION) -> di
 
 
 def load_captures(iid: str, repo_id: str = REPO_ID, revision: str = REVISION):
-    """Download + load residual safetensors for one trajectory."""
-    import safetensors.torch as st
+    """Download + load residual safetensors for one trajectory.
+
+    Requires `safetensors` + `torch` (install with `pip install -e .[online_v4]`).
+    Only needed for ONLINE v4_cross_layer detector computation.
+    """
+    import safetensors.torch as st  # local import to keep core deps minimal
     path = hf_hub_download(repo_id=repo_id, filename=f"captures/{iid}.safetensors",
                             repo_type="dataset", revision=revision)
     return st.load_file(path)
+
+
+def load_v4_cache(repo_id: str = REPO_ID, revision: str = REVISION) -> dict:
+    """Load precomputed v4_cross_layer detector outputs for all 99 trajectories.
+
+    Returns dict mapping iid -> {fires_late_half, fire_turn, late_half_range, ...}
+    from features/early_warning_v4_cross_layer.json.
+
+    Cached at module level for efficiency (loaded once per eval run).
+    """
+    path = hf_hub_download(repo_id=repo_id, filename="features/early_warning_v4_cross_layer.json",
+                            repo_type="dataset", revision=revision)
+    raw = json.load(open(path))
+    # File schema: {"per_trajectory": [{"iid": ..., "fires_late_half": ..., ...}, ...]}
+    # or top-level dict by iid. Normalize.
+    if isinstance(raw, list):
+        return {entry["iid"]: entry for entry in raw}
+    if "per_trajectory" in raw:
+        return {entry["iid"]: entry for entry in raw["per_trajectory"]}
+    return raw  # assume already iid-keyed

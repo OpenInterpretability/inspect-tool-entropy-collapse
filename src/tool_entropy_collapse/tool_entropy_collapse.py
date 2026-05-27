@@ -9,34 +9,48 @@ from typing import Literal
 from inspect_ai import Task, task
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 
-from tool_entropy_collapse.dataset import load_trajectory_dataset, load_trace, load_captures
+from tool_entropy_collapse.dataset import (
+    load_trajectory_dataset, load_trace, load_captures, load_v4_cache,
+)
 from tool_entropy_collapse.detectors import run_detector, DETECTORS
 from tool_entropy_collapse.scorers import wandering_detector_scorer
 
 DetectorName = Literal["v1_forensic", "v4_cross_layer", "v5_tool_entropy", "v1_or_v5"]
 
 
+# Module-level cache for v4_cross_layer outputs (loaded once per eval run)
+_V4_CACHE: dict | None = None
+
+
+def _get_v4_cache() -> dict:
+    global _V4_CACHE
+    if _V4_CACHE is None:
+        _V4_CACHE = load_v4_cache()
+    return _V4_CACHE
+
+
 @solver
 def detector_solver(detector: DetectorName = "v1_or_v5", threshold: float = 0.8) -> Solver:
     """Solver that runs the WANDERING detector on the trajectory + emits JSON verdict.
 
-    Loads the trace + captures from HF for the sample iid, runs the detector,
-    sets state.output.completion to JSON of {fired, fire_turn, confidence}.
+    Loads the trace from HF for the sample iid, runs the detector, sets
+    state.output.completion to JSON of {fired, fire_turn, confidence}.
+
+    For v4_cross_layer: uses precomputed cached outputs (no torch/probes needed).
+    For online v4 with raw residuals, see openinterp-swebench-harness main repo.
     """
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         iid = state.metadata["iid"]
         trace = load_trace(iid)
-        captures = None
+        kw = {"threshold": threshold}
         if detector == "v4_cross_layer":
-            captures = load_captures(iid)
-        verdict = run_detector(detector, trace, captures=captures, threshold=threshold)
-        # Strip out any non-JSON-serializable inner objects (e.g. nested dicts ok, but no tensors)
+            kw["v4_cache"] = _get_v4_cache()
+        verdict = run_detector(detector, trace, **kw)
         clean_verdict = {
             "fired": verdict["fired"],
             "fire_turn": verdict.get("fire_turn"),
             "confidence": verdict.get("confidence", 0.0),
         }
-        # Manually set the output completion
         from inspect_ai.model import ModelOutput, ChatCompletionChoice, ChatMessageAssistant
         state.output = ModelOutput(
             model="detector://" + detector,
@@ -52,7 +66,7 @@ def detector_solver(detector: DetectorName = "v1_or_v5", threshold: float = 0.8)
 @task
 def tool_entropy_collapse(
     detector: DetectorName = "v1_or_v5",
-    threshold: float = 0.8,
+    threshold: float = 0.5,  # lowered from 0.8 — paper-grade v5 fires at ~0.4-0.5 tool-entropy
     include_classes: str = "wandering,success",  # comma-separated for CLI override
 ) -> Task:
     """WANDERING failure-mode detection eval on 99 SWE-bench Pro Qwen3.6-27B trajectories.

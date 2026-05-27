@@ -13,42 +13,46 @@ import math
 from collections import Counter
 from typing import Literal
 
-# Forensic v1: textual completion verbalizations indicating "done but not finishing"
+# Forensic v1: completion verbalizations targeting "task is done" self-referential statements.
+# Calibrated against Tool-Entropy paper §6.1 (35% recall / 0% FP).
 V1_FORENSIC_PATTERNS = [
-    r"\bdone\b", r"\bcomplete\b", r"\bfinished\b", r"\bsubmit",
-    r"\bthe answer is\b", r"\bsolution is\b", r"\bI believe\b.*\bcorrect\b",
-    r"\bshould (work|pass|be correct)\b",
+    r"\bI[' ]?m\s+(done|finished|complete)\b",
+    r"\bI[' ]?ve\s+(completed|finished|solved|fixed|addressed)\b",
+    r"\b(solution|task|problem|issue|patch|fix)\s+is\s+(complete|done|solved|finished|ready|good)\b",
+    r"\bsubmitting\s+(my|the|this)\s+(solution|answer|patch|fix)\b",
+    r"\bI\s+(will|am going to|need to)\s+(submit|finalize|finish)\b",
+    r"\bthis\s+(should\s+)?(solve|fix|resolve|address)\s+the\s+(problem|issue|task|bug)\b",
+    r"\bready\s+to\s+(submit|finalize|finish)\b",
+    r"\b(everything|all)\s+(looks|seems|appears)\s+(good|correct|right)\b",
+    r"\b(my|the|this)\s+(implementation|change|patch|fix)\s+(should|will|now)\s+(work|pass|fix|resolve)\b",
+    r"\b(let me|I will)\s+finalize\b",
+    r"\bI[' ]?m\s+confident\s+(this|that)\b",
 ]
 
 
 def v1_forensic(trace: dict, threshold_matches: int = 1) -> dict:
-    """v1: post-hoc text monitor.
+    """v1: post-hoc text monitor on assistant's final-turn completion language.
 
-    Fires if assistant verbalizes completion-like phrases in last 5 turns.
-    Tier 1 forensics: 35% recall, 0% FP per Tool-Entropy paper.
+    Checks the LAST turn's assistant content + thinking for specific self-referential
+    completion statements (not generic "done" which is too common in coding context).
+
+    Tier 1 forensics: paper target 35% recall, 0% FP. Per paper, very specific patterns.
     """
     import re
     turns = trace.get("turns", [])
     if not turns:
         return {"fired": False, "fire_turn": None, "confidence": 0.0}
 
-    # Check last 5 turns
-    late = turns[-5:]
-    matches_per_turn = []
-    for t in late:
-        text = (t.get("content") or "") + " " + (t.get("thinking") or "")
-        count = sum(1 for pat in V1_FORENSIC_PATTERNS if re.search(pat, text, re.IGNORECASE))
-        matches_per_turn.append(count)
+    # Check ONLY the last turn — that's where "I'm done, submitting" lives in WANDERING
+    last = turns[-1]
+    text = (last.get("content") or "") + " " + (last.get("thinking") or "")
+    matches = sum(1 for pat in V1_FORENSIC_PATTERNS if re.search(pat, text, re.IGNORECASE))
 
-    total = sum(matches_per_turn)
-    fired = total >= threshold_matches
-    fire_turn = None
-    if fired:
-        for i, c in enumerate(matches_per_turn):
-            if c > 0:
-                fire_turn = len(turns) - 5 + i
-                break
-    return {"fired": fired, "fire_turn": fire_turn, "confidence": min(1.0, total / 5.0)}
+    fired = matches >= threshold_matches
+    fire_turn = len(turns) - 1 if fired else None
+    confidence = min(1.0, matches / 3.0)
+    return {"fired": fired, "fire_turn": fire_turn, "confidence": confidence,
+            "matched_patterns": matches}
 
 
 def tool_entropy_last_n(trace: dict, window: int = 10) -> float:
@@ -68,51 +72,70 @@ def tool_entropy_last_n(trace: dict, window: int = 10) -> float:
 
 
 def v5_tool_entropy(trace: dict, threshold: float = 0.8, window: int = 10) -> dict:
-    """v5: tool-use entropy collapse.
+    """v5: tool-use entropy collapse (single measurement at trajectory end).
 
-    Fires when last-N tool-call entropy < threshold (low diversity = stuck in loop).
-    Tier 3 autonomous: 55% recall, 5% FP per Tool-Entropy paper (Qwen3.6-27B).
+    Per Tool-Entropy paper §6: measure Shannon entropy of tool-call name distribution
+    in the LAST `window` turns. Fires when entropy < threshold.
+
+    Paper-reported: W/S median ratio 0.41 on Qwen3.6-27B, Mann-Whitney p=1.0e-6.
+    Tier 3 autonomous: 55% recall, 5% FP at threshold=0.8 (paper-grade).
+
+    Single repeated tool (ent=0.0) IS the canonical WANDERING signature — no guard against it.
     """
     turns = trace.get("turns", [])
     if len(turns) < window:
-        return {"fired": False, "fire_turn": None, "confidence": 0.0}
+        return {"fired": False, "fire_turn": None, "confidence": 0.0,
+                "tool_entropy_last10": None}
 
-    # Scan from earliest possible fire turn (window-th turn) to end
-    fired = False
-    fire_turn = None
-    for fire_idx in range(window, len(turns) + 1):
-        subset = {"turns": turns[:fire_idx]}
-        ent = tool_entropy_last_n(subset, window=window)
-        if ent < threshold and ent > 0:  # ent=0 means no tool calls (different failure)
-            fired = True
-            fire_turn = fire_idx - 1
-            break
-
-    final_ent = tool_entropy_last_n(trace, window=window)
-    confidence = max(0.0, 1.0 - final_ent / threshold) if threshold > 0 else 0.0
-    return {"fired": fired, "fire_turn": fire_turn, "confidence": confidence}
+    ent = tool_entropy_last_n(trace, window=window)
+    fired = ent < threshold
+    # If fired, the "fire turn" is conceptually the start of the low-entropy window
+    fire_turn = len(turns) - window if fired else None
+    confidence = max(0.0, 1.0 - ent / threshold) if threshold > 0 else 0.0
+    return {"fired": fired, "fire_turn": fire_turn, "confidence": confidence,
+            "tool_entropy_last10": ent}
 
 
-def v4_cross_layer(trace: dict, captures: dict, threshold_disagreement: float = 0.5) -> dict:
-    """v4: residual cross-layer probe disagreement.
+def v4_cross_layer(trace: dict, v4_cache: dict | None = None,
+                    range_threshold: float = 0.30, **kw) -> dict:
+    """v4: residual cross-layer probe disagreement (CACHED outputs).
 
-    Compares per-turn probe scores at L11/L23/L31/L43/L55 in late-half turns.
-    Fires when L11/L55 (edge) disagree with L23/L31/L43 (mid) consensus.
+    Loads precomputed v4 detector outputs from features/early_warning_v4_cross_layer.json
+    in the HF dataset. Per-trajectory schema:
+      - range_late: max-min probe score across L11/L23/L31/L43/L55 in late-half turns
+      - std_late, sign_dis_late: variation metrics
+      - ranges_per_turn: per-turn range over all layers
+      - late_convergence_slope: trend in late half
 
-    NOTE: This is a simplified stub. Full implementation needs the trained probes
-    from caiovicentino1/agent-probe-guard-qwen36-27b. Currently returns a placeholder.
+    Fires when range_late > 0.30 (Tool-Entropy paper Tier 2 threshold).
+    Paper: 65% recall, 30% FP @ 15-turn lead.
     """
-    # TODO: load probes from HF, compute per-turn per-layer scores, measure
-    # late-half range across layers. Per paper: late-half range > threshold = fire.
-    n_turns = len(trace.get("turns", []))
-    return {"fired": False, "fire_turn": None, "confidence": 0.0,
-            "note": "v4 requires probe weights — not yet wired"}
+    iid = trace.get("instance_id", "")
+    if v4_cache is None or iid not in v4_cache:
+        return {"fired": False, "fire_turn": None, "confidence": 0.0,
+                "note": "v4 cache miss"}
+    entry = v4_cache[iid]
+    range_late = float(entry.get("range_late", 0.0))
+    fired = range_late > range_threshold
+    # Approximate fire_turn: first turn in late-half where ranges_per_turn exceeds threshold
+    fire_turn = None
+    if fired:
+        rpt = entry.get("ranges_per_turn", [])
+        n_turns = len(rpt)
+        late_start = n_turns // 2
+        for i in range(late_start, n_turns):
+            if rpt[i] > range_threshold:
+                fire_turn = i
+                break
+    return {"fired": fired, "fire_turn": fire_turn, "confidence": range_late,
+            "range_late": range_late,
+            "late_convergence_slope": entry.get("late_convergence_slope")}
 
 
 DETECTORS = {
     "v1_forensic": lambda trace, **kw: v1_forensic(trace),
     "v5_tool_entropy": lambda trace, **kw: v5_tool_entropy(trace, threshold=kw.get("threshold", 0.8)),
-    "v4_cross_layer": lambda trace, captures, **kw: v4_cross_layer(trace, captures),
+    "v4_cross_layer": lambda trace, **kw: v4_cross_layer(trace, v4_cache=kw.get("v4_cache")),
 }
 
 
@@ -133,11 +156,8 @@ def v1_or_v5(trace: dict, threshold: float = 0.8) -> dict:
 DETECTORS["v1_or_v5"] = lambda trace, **kw: v1_or_v5(trace, threshold=kw.get("threshold", 0.8))
 
 
-def run_detector(detector_name: str, trace: dict, captures: dict | None = None, **kwargs) -> dict:
-    """Dispatch to named detector."""
+def run_detector(detector_name: str, trace: dict, **kwargs) -> dict:
+    """Dispatch to named detector. v4 expects v4_cache kwarg with precomputed outputs."""
     if detector_name not in DETECTORS:
         raise ValueError(f"Unknown detector: {detector_name}. Available: {list(DETECTORS.keys())}")
-    fn = DETECTORS[detector_name]
-    if detector_name == "v4_cross_layer":
-        return fn(trace, captures or {}, **kwargs)
-    return fn(trace, **kwargs)
+    return DETECTORS[detector_name](trace, **kwargs)
