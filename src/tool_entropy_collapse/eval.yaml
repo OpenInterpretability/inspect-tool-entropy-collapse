@@ -33,6 +33,6 @@ metadata:
   paper_doi: "10.5281/zenodo.20368601"
   data_repo: "https://huggingface.co/datasets/caiovicentino1/swebench-pro-qwen36-27b-phase6"
   hardware_caveat: |
-    WANDERING category is single-run classified on RTX 6000 Ada. Cross-GPU re-runs
+    WANDERING category is single-run classified on RTX 6000 Pro Blackwell. Cross-GPU re-runs
     show ~35% natural finish_tool flip rate on H100, so labels include some hardware-
     determinism noise. See companion paper #2 for discussion.
