@@ -13,20 +13,21 @@ import math
 from collections import Counter
 from typing import Literal
 
-# Forensic v1: completion verbalizations targeting "task is done" self-referential statements.
-# Calibrated against Tool-Entropy paper §6.1 (35% recall / 0% FP).
+# Forensic v1: CONTINUED-EXPLORATION patterns calibrated data-driven against Phase 6.
+# WANDERING agents do NOT verbalize completion ("I'm done") — they verbalize ongoing
+# uncertainty/exploration ("the issue is...", "let me look at...", "maybe the issue...").
+# Discriminative 3-grams mined from 20 WANDERING vs 40 SUCCESS final-turn texts.
 V1_FORENSIC_PATTERNS = [
-    r"\bI[' ]?m\s+(done|finished|complete)\b",
-    r"\bI[' ]?ve\s+(completed|finished|solved|fixed|addressed)\b",
-    r"\b(solution|task|problem|issue|patch|fix)\s+is\s+(complete|done|solved|finished|ready|good)\b",
-    r"\bsubmitting\s+(my|the|this)\s+(solution|answer|patch|fix)\b",
-    r"\bI\s+(will|am going to|need to)\s+(submit|finalize|finish)\b",
-    r"\bthis\s+(should\s+)?(solve|fix|resolve|address)\s+the\s+(problem|issue|task|bug)\b",
-    r"\bready\s+to\s+(submit|finalize|finish)\b",
-    r"\b(everything|all)\s+(looks|seems|appears)\s+(good|correct|right)\b",
-    r"\b(my|the|this)\s+(implementation|change|patch|fix)\s+(should|will|now)\s+(work|pass|fix|resolve)\b",
-    r"\b(let me|I will)\s+finalize\b",
-    r"\bI[' ]?m\s+confident\s+(this|that)\b",
+    r"\bthe\s+issue\s+is\b",          # 75% W vs 2.5% S
+    r"\blet\s+me\s+look\b",           # 55% W vs 0% S
+    r"\bmaybe\s+the\s+issue\b",       # 45% W vs 2.5% S
+    r"\b(wait|actually)\s+let\s+me\b",# 30% W vs 0% S
+    r"\bthere[' ]?s\s+a\b",           # 30% W vs 0% S
+    r"\bissue\s+is\s+about\b",        # 30% W vs 0% S
+    r"\blet\s+me\s+verify\b",         # 25% W vs 2.5% S
+    r"\bwhat\s+if\s+the\b",           # 25% W vs 0% S
+    r"\blet\s+me\s+run\b",            # 25% W vs 0% S
+    r"\bcheck\s+if\s+maybe\b",        # 20% W vs 0% S
 ]
 
 
@@ -97,7 +98,7 @@ def v5_tool_entropy(trace: dict, threshold: float = 0.8, window: int = 10) -> di
 
 
 def v4_cross_layer(trace: dict, v4_cache: dict | None = None,
-                    range_threshold: float = 0.30, **kw) -> dict:
+                    range_threshold: float = 0.50, **kw) -> dict:
     """v4: residual cross-layer probe disagreement (CACHED outputs).
 
     Loads precomputed v4 detector outputs from features/early_warning_v4_cross_layer.json
