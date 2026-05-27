@@ -10,7 +10,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 from inspect_ai.dataset import MemoryDataset, Sample
 
 REPO_ID = "caiovicentino1/swebench-pro-qwen36-27b-phase6"
-REVISION = "main"  # TODO: replace with pinned SHA after upload completes
+REVISION = "a12189c8b92102084140a2dac5f9a27ddd879ace"  # pinned 2026-05-27 (420 files, 910 MB)
 
 
 def derive_sub_class(traj: dict) -> str:
