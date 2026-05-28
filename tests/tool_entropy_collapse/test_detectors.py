@@ -48,20 +48,29 @@ class TestV1Forensic:
 
 class TestV5ToolEntropy:
     def test_single_tool_repeated_low_entropy_fires(self):
-        # 15 turns all calling bash → entropy = 0
+        # 15 turns all calling bash → entropy = 0.0 (single category).
+        # This is the CANONICAL WANDERING signature per Tool-Entropy paper §6:
+        # an agent collapsed onto a single repeated tool. v5 FIRES (0.0 < threshold),
+        # consistent with the validated N=99 result (v5 55% recall / 5% FP).
         turns = [make_turn(tool_calls=[{"name": "bash"}]) for _ in range(15)]
         trace = make_trace(turns)
         r = v5_tool_entropy(trace, threshold=0.5, window=10)
-        # Wait — entropy = 0 (single category), but our v5 logic has "ent > 0" guard
-        # because ent=0 means "no tool calls" semantically. Single repeated tool: ent=0
-        # in math but here it should count as low diversity. Let me check the impl.
-        # Re-checking: tool_entropy_last_n returns 0.0 if no names OR if single name
-        # (since -1*log2(1) = 0). The guard "ent > 0" excludes this case.
-        # This is a logic bug — single repeated tool should fire (it's the canonical
-        # WANDERING pattern). Will need to update logic.
-        # For now test the current behavior:
-        assert r["fired"] is False  # current behavior, would prefer True
-        # TODO: fix logic to distinguish "no tools" (ent=0) from "single tool" (also ent=0)
+        assert r["fired"] is True
+        assert r["tool_entropy_last10"] == 0.0
+
+    def test_no_tool_calls_edge_case(self):
+        # Edge case: zero tool calls in the last `window` turns also yields ent=0.0
+        # and therefore FIRES under the current (validated) logic. This case does NOT
+        # occur in the N=99 validation set — SUCCESS trajectories emit finish_tool and
+        # WANDERING/LOCKED loop on tools, so the last-10 window always contains tool
+        # calls. Documented here as current behavior; semantically distinguishing
+        # "no tools" from "single repeated tool" would be a detector-logic change
+        # requiring re-validation against N=99 to confirm 55%/5% is preserved.
+        turns = [make_turn(content="thinking only, no tools") for _ in range(15)]
+        trace = make_trace(turns)
+        r = v5_tool_entropy(trace, threshold=0.5, window=10)
+        assert r["fired"] is True  # current validated behavior (ent=0.0 < threshold)
+        assert r["tool_entropy_last10"] == 0.0
 
     def test_diverse_tools_high_entropy_does_not_fire(self):
         # 10 turns each with different tool → high entropy
